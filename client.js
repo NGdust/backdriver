@@ -171,153 +171,28 @@ const ChaseGame = () => {
         break;
       
       case 'gameOver':
-        console.log('Игра окончена!', { 
-          winner: data.winner, 
-          reason: data.reason,
-          playerRole, 
-          playerId,
-          gameState: gameState,
-          dataRoles: data.roles,
-          myRole: data.myRole
-        });
-        
-        // Если playerRole или playerId не определены, пытаемся восстановить из localStorage
-        let currentRole = playerRole;
-        let currentId = playerId;
-        
-        // Сначала пробуем использовать myRole из сервера
-        if (!currentRole && data.myRole) {
-          currentRole = data.myRole;
-          console.log('Восстановлена роль из data.myRole:', currentRole);
-          localStorage.setItem('lastPlayerRole', currentRole);
+        console.log('Игра окончена:', data);
+      
+        // Надёжно получаем свой id и роль
+        const currentId = playerId || localStorage.getItem('lastPlayerId') || data.myId;
+        const currentRole = data.myRole || (data.roles && currentId ? data.roles[currentId] : null) || playerRole || localStorage.getItem('lastPlayerRole') || 'unknown';
+      
+        // Нормализуем winner (в сервере используется 'straight' или 'gays')
+        const winner = data.winner;
+      
+        // Определяем результат для текущего игрока
+        let result = 'lost';
+        if (winner === 'straight') {
+          result = (currentRole === 'straight') ? 'won' : 'lost';
+        } else if (winner === 'gays') {
+          result = (currentRole === 'straight') ? 'lost' : 'won';
         }
-        
-        if (!currentRole) {
-          currentRole = localStorage.getItem('lastPlayerRole');
-          console.log('Восстановлена роль из localStorage:', currentRole);
-        }
-        
-        if (!currentId) {
-          currentId = localStorage.getItem('lastPlayerId');
-          console.log('Восстановлен ID из localStorage:', currentId);
-        }
-        
-        // Дополнительная проверка: если роль все еще не определена, пытаемся получить из data
-        if (!currentRole && data.roles) {
-          console.log('Пытаемся восстановить роль из data.roles:', data.roles);
-          console.log('Текущий ID:', currentId);
-          
-          // Пробуем найти роль по ID
-          if (data.roles[currentId]) {
-            currentRole = data.roles[currentId];
-            console.log('Восстановлена роль из data.roles по ID:', currentRole);
-            localStorage.setItem('lastPlayerRole', currentRole);
-          } else {
-            // Если не нашли по ID, пробуем найти по имени или другим способом
-            console.log('Роль не найдена по ID, пробуем другие способы');
-            
-            // Пробуем найти роль по имени игрока
-            const playerName = localStorage.getItem('playerName');
-            if (playerName) {
-              // Ищем игрока по имени в ролях
-              for (const [id, role] of Object.entries(data.roles)) {
-                // Это не идеально, но может помочь
-                if (role === 'straight' || role === 'gay') {
-                  currentRole = role;
-                  console.log('Найдена роль по имени:', currentRole);
-                  localStorage.setItem('lastPlayerRole', currentRole);
-                  break;
-                }
-              }
-            }
-          }
-        }
-        
-        // Последняя попытка: если роль все еще не определена, используем fallback логику
-        if (!currentRole) {
-          console.log('Роль не определена, используем fallback логику');
-          console.log('Доступные роли в data.roles:', data.roles);
-          console.log('Текущий ID:', currentId);
-          
-          // Пытаемся определить роль по позиции в списке игроков
-          const playerList = Object.keys(data.roles || {});
-          console.log('Список игроков:', playerList);
-          
-          if (playerList.length > 0) {
-            // Пробуем найти себя в списке
-            const myIndex = playerList.indexOf(currentId);
-            if (myIndex !== -1) {
-              // Если нашли себя, пробуем определить роль по позиции
-              if (myIndex === 0) {
-                currentRole = 'straight';
-                console.log('Определена роль как натурал по позиции (первый)');
-              } else {
-                currentRole = 'gay';
-                console.log('Определена роль как гей по позиции');
-              }
-            } else {
-              // Если не нашли себя в списке, по умолчанию гей
-              currentRole = 'gay';
-              console.log('Не найден в списке, роль по умолчанию: гей');
-            }
-          } else {
-            // Если нет списка ролей, по умолчанию гей
-            currentRole = 'gay';
-            console.log('Нет списка ролей, роль по умолчанию: гей');
-          }
-          
-          console.log('Установлена роль по умолчанию:', currentRole);
-          // Сохраняем в localStorage для будущего использования
-          localStorage.setItem('lastPlayerRole', currentRole);
-        }
-        
-        // Определяем результат на основе роли игрока и победителя
-        let result;
-        if (data.winner === 'straight') {
-          // Натурал выиграл (выдержал 2 минуты)
-          result = currentRole === 'straight' ? 'won' : 'lost';
-        } else if (data.winner === 'gays') {
-          // Геи выиграли (поймали натурала или время истекло)
-          result = currentRole === 'straight' ? 'lost' : 'won';
-        } else {
-          // Неизвестный результат, по умолчанию проигрыш
-          result = 'lost';
-        }
-        
-        // Дополнительная проверка: если роль все еще не определена, пытаемся получить из data
-        if (!currentRole && data.roles && data.roles[currentId]) {
-          currentRole = data.roles[currentId];
-          console.log('Восстановлена роль из data.roles:', currentRole);
-          
-          // Пересчитываем результат с правильной ролью
-          if (data.winner === 'straight') {
-            result = currentRole === 'straight' ? 'won' : 'lost';
-          } else if (data.winner === 'gays') {
-            result = currentRole === 'straight' ? 'lost' : 'won';
-          } else {
-            result = 'lost';
-          }
-        }
-        
-        console.log(`Результат: ${result} (победитель: ${data.winner}, роль игрока: ${currentRole})`);
-        console.log('Детали определения результата:', {
-          winner: data.winner,
-          currentRole: currentRole,
-          currentId: currentId,
-          isStraight: currentRole === 'straight',
-          isGay: currentRole === 'gay',
-          result: result,
-          dataRoles: data.roles,
-          originalPlayerRole: playerRole,
-          originalPlayerId: playerId,
-          logicCheck: {
-            winnerIsStraight: data.winner === 'straight',
-            winnerIsGays: data.winner === 'gays',
-            playerIsStraight: currentRole === 'straight',
-            shouldWin: (data.winner === 'straight' && currentRole === 'straight') || (data.winner === 'gays' && currentRole !== 'straight')
-          }
-        });
-        setGameEndReason(data.reason);
+      
+        console.log(`playerId=${currentId}, role=${currentRole}, winner=${winner}, result=${result}`);
+      
+        setGameEndReason(data.reason || null);
+        setPlayerRole(currentRole);
+        localStorage.setItem('lastPlayerRole', currentRole);
         setGameState(result);
         break;
       
@@ -524,7 +399,7 @@ const ChaseGame = () => {
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-purple-400 via-pink-300 to-yellow-300 p-4">
       <div className="bg-white rounded-xl shadow-2xl p-6 max-w-4xl w-full">
         <h1 className="text-4xl font-bold text-center mb-4 bg-gradient-to-r from-blue-600 to-pink-600 bg-clip-text text-transparent">
-          🏃 Погоня 🏳️‍🌈 (Мультиплеер)
+        🏳️‍🌈 Бэкдрайвер
         </h1>
 
         <div className="text-center mb-4">

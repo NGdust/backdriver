@@ -141,18 +141,25 @@ function endGame(roomCode, winner, reason) {
   if (room.gameInterval) {
     clearInterval(room.gameInterval);
   }
-  
-  // Очищаем таймер переподключения
+
   if (room.reconnectTimeout) {
     clearTimeout(room.reconnectTimeout);
     room.reconnectTimeout = null;
   }
 
-  broadcastToRoom(roomCode, {
-    type: 'gameOver',
-    winner: winner,
-    reason: reason,
-    roles: room.roles
+  // Персональная рассылка: каждому игроку отправляем его роль в поле myRole и его playerId
+  room.players.forEach(player => {
+    const client = clients.get(player.id);
+    if (client && client.readyState === WebSocket.OPEN) {
+      client.send(JSON.stringify({
+        type: 'gameOver',
+        winner: winner,
+        reason: reason,
+        roles: room.roles,
+        myRole: room.roles[player.id], // роль для этого клиента
+        myId: player.id
+      }));
+    }
   });
 }
 
