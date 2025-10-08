@@ -13,6 +13,72 @@ const Timer = () => React.createElement('div', { className: 'w-6 h-6' }, '⏱️
 const Copy = () => React.createElement('div', { className: 'w-6 h-6' }, '📋');
 const Check = () => React.createElement('div', { className: 'w-6 h-6' }, '✅');
 
+// Компонент модального окна для результатов раунда
+const RoundEndModal = ({ isOpen, gameEndReason, score, roundNumber, readyPlayers, totalPlayers, isReady, onMarkAsReady }) => {
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl shadow-2xl p-8 max-w-md w-full mx-4 transform transition-all duration-300 scale-100">
+        <div className="text-center space-y-6">
+          <div className="text-6xl mb-4">
+            {gameEndReason === 'timeout' ? '⏰' : '🎯'}
+          </div>
+          
+          <h2 className="text-3xl font-bold mb-4">
+            {gameEndReason === 'timeout' ? 'Время вышло!' : 'Пойман!'}
+          </h2>
+          
+          <p className="text-xl mb-6">
+            {gameEndReason === 'timeout' 
+              ? 'Натурал продержался 2 минуты!' 
+              : 'Геи поймали натурала!'}
+          </p>
+          
+          <div className="bg-gray-50 p-4 rounded-lg mb-6">
+            <h3 className="text-xl font-bold mb-3">Счет:</h3>
+            <div className="flex justify-center items-center gap-8">
+              <div className="text-center">
+                <div className="text-3xl font-bold text-blue-600">{score.straight}</div>
+                <div className="text-sm text-gray-600">Натуралы</div>
+              </div>
+              <div className="text-3xl font-bold text-gray-400">:</div>
+              <div className="text-center">
+                <div className="text-3xl font-bold text-pink-600">{score.gays}</div>
+                <div className="text-sm text-gray-600">Геи</div>
+              </div>
+            </div>
+            <div className="text-center mt-2 text-sm text-gray-500">
+              Раунд {roundNumber + 1}
+            </div>
+          </div>
+
+          <div className="mb-6">
+            <p className="text-lg">
+              Готовы к следующему раунду? Роли будут распределены случайно!
+            </p>
+            <p className="text-sm text-gray-600 mt-2">
+              Готово: {readyPlayers.length} из {totalPlayers}
+            </p>
+          </div>
+
+          <button 
+            onClick={onMarkAsReady}
+            disabled={isReady}
+            className={`w-full px-8 py-4 rounded-lg text-xl font-bold transition-transform ${
+              isReady 
+                ? 'bg-green-100 text-green-700 cursor-not-allowed' 
+                : 'bg-gradient-to-r from-green-500 to-blue-500 text-white hover:scale-105'
+            }`}
+          >
+            {isReady ? '✅ Готов!' : '🎮 Готов к новому раунду!'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const ChaseGame = () => {
   const canvasRef = useRef(null);
   const [gameState, setGameState] = useState('menu'); // menu, lobby, playing, roundEnded, won, lost
@@ -39,6 +105,7 @@ const ChaseGame = () => {
   const [isReady, setIsReady] = useState(false);
   const [lobbyReadyPlayers, setLobbyReadyPlayers] = useState([]);
   const [isLobbyReady, setIsLobbyReady] = useState(false);
+  const [showRoundEndModal, setShowRoundEndModal] = useState(false);
   
   const wsRef = useRef(null);
   const keysPressed = useRef({});
@@ -213,6 +280,7 @@ const ChaseGame = () => {
         setReadyPlayers(data.readyPlayers || []);
         setTotalPlayers(data.totalPlayers || 0);
         setGameState('roundEnded');
+        setShowRoundEndModal(true);
         break;
       
       case 'newRound':
@@ -227,6 +295,7 @@ const ChaseGame = () => {
         setReadyPlayers([]);
         setTotalPlayers(0);
         setGameState('playing');
+        setShowRoundEndModal(false);
         break;
       
       case 'readyUpdate':
@@ -626,7 +695,7 @@ const ChaseGame = () => {
           </div>
         )}
 
-        {gameState === 'playing' && (
+        {(gameState === 'playing' || gameState === 'roundEnded') && (
           <>
             <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
               <div className="flex items-center gap-2 bg-blue-100 px-4 py-2 rounded-lg">
@@ -673,59 +742,18 @@ const ChaseGame = () => {
           </>
         )}
 
-        {gameState === 'roundEnded' && (
-          <div className="text-center space-y-6">
-            <div className="bg-white border-2 border-gray-200 rounded-lg p-6">
-              <h2 className="text-3xl font-bold mb-4">
-                {gameEndReason === 'timeout' ? '⏰ Время вышло!' : '🎯 Пойман!'}
-              </h2>
-              <p className="text-xl mb-4">
-                {gameEndReason === 'timeout' 
-                  ? 'Натурал продержался 2 минуты!' 
-                  : 'Геи поймали натурала!'}
-              </p>
-              
-              <div className="bg-gray-50 p-4 rounded-lg mb-4">
-                <h3 className="text-xl font-bold mb-3">Счет:</h3>
-                <div className="flex justify-center items-center gap-8">
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-blue-600">{score.straight}</div>
-                    <div className="text-sm text-gray-600">Натуралы</div>
-                  </div>
-                  <div className="text-3xl font-bold text-gray-400">:</div>
-                  <div className="text-center">
-                    <div className="text-3xl font-bold text-pink-600">{score.gays}</div>
-                    <div className="text-sm text-gray-600">Геи</div>
-                  </div>
-                </div>
-                <div className="text-center mt-2 text-sm text-gray-500">
-                  Раунд {roundNumber + 1}
-                </div>
-              </div>
+        {/* Модальное окно для результатов раунда */}
+        <RoundEndModal 
+          isOpen={showRoundEndModal}
+          gameEndReason={gameEndReason}
+          score={score}
+          roundNumber={roundNumber}
+          readyPlayers={readyPlayers}
+          totalPlayers={totalPlayers}
+          isReady={isReady}
+          onMarkAsReady={markAsReady}
+        />
 
-              <div className="mb-4">
-                <p className="text-lg">
-                  Готовы к следующему раунду? Роли будут распределены случайно!
-                </p>
-                <p className="text-sm text-gray-600 mt-2">
-                  Готово: {readyPlayers.length} из {totalPlayers}
-                </p>
-              </div>
-
-              <button 
-                onClick={markAsReady}
-                disabled={isReady}
-                className={`px-8 py-4 rounded-lg text-xl font-bold transition-transform ${
-                  isReady 
-                    ? 'bg-green-100 text-green-700 cursor-not-allowed' 
-                    : 'bg-gradient-to-r from-green-500 to-blue-500 text-white hover:scale-105'
-                }`}
-              >
-                {isReady ? '✅ Готов!' : '🎮 Готов к новому раунду!'}
-              </button>
-            </div>
-          </div>
-        )}
 
         {(gameState === 'won' || gameState === 'lost') && (
           <div className="text-center space-y-4">
