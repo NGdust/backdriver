@@ -112,8 +112,9 @@ function startGameLoop(roomCode) {
 
     // Проверяем столкновения между игроками
     Object.entries(room.gamePlayers).forEach(([id, player]) => {
-      if (player.role === 'gay') {
-        const straight = Object.values(room.gamePlayers).find(p => p.role === 'straight');
+      if (player.role === 'gay' && !player.eliminated) {
+        // Проверяем столкновение с натуралом
+        const straight = Object.values(room.gamePlayers).find(p => p.role === 'straight' && !p.eliminated);
         if (straight && checkCollision(player.x, player.y, straight.x, straight.y, PLAYER_SIZE)) {
           broadcastToRoom(roomCode, {
             type: 'collision',
@@ -123,9 +124,23 @@ function startGameLoop(roomCode) {
           // Защита от повторного вызова
           if (!room.collisionHandled) {
             room.collisionHandled = true;
-            setTimeout(() => endRound(roomCode, 'gays', 'caught'), 1500);
+            // Блокируем движение атакующего гея
+            player.movementBlocked = true;
+            setTimeout(() => {
+              player.movementBlocked = false;
+              endRound(roomCode, 'gays', 'caught');
+            }, 1500);
           }
         }
+        
+        // Проверяем столкновение с другими геями
+        Object.entries(room.gamePlayers).forEach(([otherId, otherPlayer]) => {
+          if (otherId !== id && otherPlayer.role === 'gay' && !otherPlayer.eliminated && 
+              checkCollision(player.x, player.y, otherPlayer.x, otherPlayer.y, PLAYER_SIZE)) {
+            // Гей атакует другого гея
+            handleGayVsGayCollision(roomCode, id, otherId, player, otherPlayer);
+          }
+        });
       }
 
       if (player.dashCooldown > 0) {
@@ -135,6 +150,64 @@ function startGameLoop(roomCode) {
 
     broadcastPersonalizedGameState(roomCode);
   }, 1000 / 60);
+}
+
+function handleGayVsGayCollision(roomCode, attackerId, victimId, attacker, victim) {
+  const room = rooms.get(roomCode);
+  if (!room) return;
+  
+  // Проверяем, что жертва еще не исключена (защита от повторных столкновений)
+  if (victim.eliminated) return;
+  
+  // Отправляем анимацию столкновения
+  broadcastToRoom(roomCode, {
+    type: 'collision',
+    x: victim.x,
+    y: victim.y
+  });
+  
+  // Блокируем движение атакующего на время анимации
+  attacker.movementBlocked = true;
+  
+  // Помечаем только жертву как исключенную, атакующий остается в игре
+  victim.eliminated = true;
+  victim.eliminatedBy = attackerId;
+  
+  console.log(`Гей ${attacker.name} атаковал гея ${victim.name} - ${victim.name} исключен`);
+  
+  // Отправляем сообщения игрокам с задержкой, чтобы сначала показалась анимация
+  setTimeout(() => {
+    const attackerClient = clients.get(attackerId);
+    const victimClient = clients.get(victimId);
+    
+    if (attackerClient && attackerClient.readyState === WebSocket.OPEN) {
+      attackerClient.send(JSON.stringify({
+        type: 'friendlyFire',
+        message: 'Вы поимели своего!',
+        victimName: victim.name
+      }));
+    }
+    
+    if (victimClient && victimClient.readyState === WebSocket.OPEN) {
+      victimClient.send(JSON.stringify({
+        type: 'eliminated',
+        message: 'Вас поимели свои!',
+        attackerName: attacker.name
+      }));
+    }
+    
+    // Разблокируем движение атакующего после анимации
+    attacker.movementBlocked = false;
+  }, 1500); // Такая же задержка, как при атаке на натурала
+  
+  // Проверяем условие победы: если остался только 1 гей и 1 натурал
+  const activeGays = Object.values(room.gamePlayers).filter(p => p.role === 'gay' && !p.eliminated);
+  const activeStraights = Object.values(room.gamePlayers).filter(p => p.role === 'straight' && !p.eliminated);
+  
+  if (activeGays.length === 1 && activeStraights.length === 1) {
+    // Натурал побеждает
+    setTimeout(() => endRound(roomCode, 'straight', 'lastGayEliminated'), 3000);
+  }
 }
 
 function endRound(roomCode, winner, reason) {
@@ -231,7 +304,10 @@ function startNewRound(roomCode) {
       role: role,
       speed: role === 'straight' ? 4.2 : 3,
       name: player.name,
-      dashCooldown: 0
+      dashCooldown: 0,
+      eliminated: false,
+      eliminatedBy: null,
+      movementBlocked: false
     };
   });
   
@@ -446,8 +522,8 @@ wss.on('connection', (ws) => {
             room.readyPlayers.has(player.id)
           );
           
-          if (allPlayersReady) {
-            // Все игроки готовы, начинаем игру
+          if (allPlayersReady && room.players.length >= 3) {
+            // Все игроки готовы и достаточно игроков, начинаем игру
             room.gameState = 'playing';
             room.timeLeft = GAME_DURATION;
             
@@ -479,7 +555,10 @@ wss.on('connection', (ws) => {
                 role: role,
                 speed: role === 'straight' ? 4.2 : 3,
                 name: player.name,
-                dashCooldown: 0
+                dashCooldown: 0,
+                eliminated: false,
+                eliminatedBy: null,
+                movementBlocked: false
               };
             });
             
@@ -512,7 +591,7 @@ wss.on('connection', (ws) => {
           if (!room || room.gameState !== 'playing') break;
           
           const player = room.gamePlayers[ws.playerId];
-          if (!player) break;
+          if (!player || player.movementBlocked) break; // Блокируем движение если игрок заблокирован
           
           let { dx, dy } = data;
           if (dx !== 0 || dy !== 0) {
@@ -538,7 +617,7 @@ wss.on('connection', (ws) => {
           if (!room || room.gameState !== 'playing') break;
           
           const player = room.gamePlayers[ws.playerId];
-          if (!player || player.role !== 'straight') break;
+          if (!player || player.role !== 'straight' || player.movementBlocked) break;
           if (player.dashCooldown > 0) break;
           
           let dashX = 0;

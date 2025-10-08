@@ -22,16 +22,20 @@ const RoundEndModal = ({ isOpen, gameEndReason, score, roundNumber, readyPlayers
       <div className="bg-white rounded-xl shadow-2xl p-8 max-w-md w-full mx-4 transform transition-all duration-300 scale-100">
         <div className="text-center space-y-6">
           <div className="text-6xl mb-4">
-            {gameEndReason === 'timeout' ? '⏰' : '🎯'}
+            {gameEndReason === 'timeout' ? '⏰' : 
+             gameEndReason === 'lastGayEliminated' ? '🏆' : '🎯'}
           </div>
           
           <h2 className="text-3xl font-bold mb-4">
-            {gameEndReason === 'timeout' ? 'Время вышло!' : 'Пойман!'}
+            {gameEndReason === 'timeout' ? 'Время вышло!' : 
+             gameEndReason === 'lastGayEliminated' ? 'Победа натурала!' : 'Пойман!'}
           </h2>
           
           <p className="text-xl mb-6">
             {gameEndReason === 'timeout' 
               ? 'Натурал продержался 2 минуты!' 
+              : gameEndReason === 'lastGayEliminated'
+              ? 'Натурал победил! Последний гей был исключен!'
               : 'Геи поймали натурала!'}
           </p>
           
@@ -106,6 +110,7 @@ const ChaseGame = () => {
   const [lobbyReadyPlayers, setLobbyReadyPlayers] = useState([]);
   const [isLobbyReady, setIsLobbyReady] = useState(false);
   const [showRoundEndModal, setShowRoundEndModal] = useState(false);
+  const [warningMessage, setWarningMessage] = useState(null);
   
   const wsRef = useRef(null);
   const keysPressed = useRef({});
@@ -322,6 +327,26 @@ const ChaseGame = () => {
       case 'roomExists':
         setRoomExists(data.exists);
         break;
+      
+      case 'friendlyFire':
+        setWarningMessage({
+          type: 'friendlyFire',
+          message: data.message + (data.victimName ? ` (${data.victimName})` : ''),
+          icon: '⚔️'
+        });
+        // Автоматически скрываем через 3 секунды
+        setTimeout(() => setWarningMessage(null), 3000);
+        break;
+      
+      case 'eliminated':
+        setWarningMessage({
+          type: 'eliminated',
+          message: data.message + (data.attackerName ? ` (${data.attackerName})` : ''),
+          icon: '❌'
+        });
+        // Автоматически скрываем через 3 секунды
+        setTimeout(() => setWarningMessage(null), 3000);
+        break;
     }
   };
 
@@ -483,6 +508,26 @@ const ChaseGame = () => {
 
     if (gameState === 'playing' && players) {
       Object.entries(players).forEach(([id, player]) => {
+        // Проверяем, исключен ли игрок
+        if (player.eliminated) {
+          // Рисуем крестик для исключенного игрока
+          ctx.strokeStyle = '#dc2626';
+          ctx.lineWidth = 4;
+          ctx.beginPath();
+          ctx.moveTo(player.x - 15, player.y - 15);
+          ctx.lineTo(player.x + 15, player.y + 15);
+          ctx.moveTo(player.x + 15, player.y - 15);
+          ctx.lineTo(player.x - 15, player.y + 15);
+          ctx.stroke();
+          
+          // Имя исключенного игрока
+          ctx.fillStyle = '#dc2626';
+          ctx.font = 'bold 12px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText(player.name + ' (X)', player.x, player.y - 25);
+          return;
+        }
+        
         // Определяем цвет в зависимости от роли
         let fillColor, strokeColor;
         if (player.role === 'straight') {
@@ -528,21 +573,14 @@ const ChaseGame = () => {
   return (
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-purple-400 via-pink-300 to-yellow-300 p-4">
       <div className="bg-white rounded-xl shadow-2xl p-6 max-w-4xl w-full">
-        <h1 className="text-4xl font-bold text-center mb-4 bg-gradient-to-r from-blue-600 to-pink-600 bg-clip-text text-transparent">
-        🏳️‍🌈 Бэкдрайвер
+        <h1 className="text-4xl font-bold text-center mb-4 bg-gradient-to-r from-blue-600 to-pink-600 bg-clip-text text-transparent flex items-center justify-center gap-3">
+          🏳️‍🌈 Бэкдрайвер
+          <span className={`w-3 h-3 rounded-full ${
+            connectionStatus === 'connected' ? 'bg-green-500' :
+            connectionStatus === 'error' ? 'bg-red-500' :
+            'bg-yellow-500'
+          }`}></span>
         </h1>
-
-        <div className="text-center mb-4">
-          <span className={`inline-block px-3 py-1 rounded-full text-sm font-bold ${
-            connectionStatus === 'connected' ? 'bg-green-100 text-green-700' :
-            connectionStatus === 'error' ? 'bg-red-100 text-red-700' :
-            'bg-yellow-100 text-yellow-700'
-          }`}>
-            {connectionStatus === 'connected' ? '🟢 Подключено' :
-             connectionStatus === 'error' ? '🔴 Ошибка подключения' :
-             '🟡 Подключение...'}
-          </span>
-        </div>
 
         {gameState === 'menu' && (
           <div className="space-y-6">
@@ -550,10 +588,10 @@ const ChaseGame = () => {
               <h2 className="text-2xl font-bold mb-4 text-blue-900">Как играть:</h2>
               <div className="text-left space-y-2">
                 <p className="flex items-center gap-2">
-                  <User /> <strong>Синий игрок</strong> - натурал (выбирается случайно!)
+                  <User /> <strong>Синий игрок</strong> - натурал
                 </p>
                 <p className="flex items-center gap-2">
-                  <Users /> <strong>Розовые игроки</strong> - геи (остальные)
+                  <Users /> <strong>Розовые игроки</strong> - геи
                 </p>
                 <p className="mt-4">🎲 <strong>Роли назначаются случайно</strong> при начале игры</p>
                 <p className="mt-4">👁️ <strong>Натурал видит</strong> всех розовыми, <strong>геи видят</strong> остальных серыми!</p>
@@ -561,6 +599,9 @@ const ChaseGame = () => {
                 <p>⚡ Пробел - рывок (только для натурала, cooldown 3 сек)</p>
                 <p className="mt-4">🎯 <strong>Цель натурала:</strong> Продержаться 2 минуты</p>
                 <p>🎯 <strong>Цель геев:</strong> Поймать натурала!</p>
+                <p>❌ <strong>Исключение:</strong> Атакованный гей выбывает (крестик на поле)</p>
+                <p>🏆 <strong>Победа:</strong> Если остался 1 гей и 1 натурал - победа натурала!</p>
+                <p className="mt-4">👥 <strong>Минимум игроков:</strong> 3 игрока</p>
               </div>
             </div>
 
@@ -675,9 +716,9 @@ const ChaseGame = () => {
               </div>
             </div>
 
-            {lobbyPlayers.length < 2 ? (
+            {lobbyPlayers.length < 3 ? (
               <div className="text-center text-lg text-gray-600">
-                Ожидание игроков... (минимум 2 игрока)
+                Ожидание игроков... (минимум 3 игрока)
               </div>
             ) : (
               <button 
@@ -697,6 +738,18 @@ const ChaseGame = () => {
 
         {(gameState === 'playing' || gameState === 'roundEnded') && (
           <>
+            {/* Предупреждение о friendly fire или исключении */}
+            {warningMessage && (
+              <div className={`mb-4 p-4 rounded-lg text-center font-bold text-lg animate-pulse ${
+                warningMessage.type === 'friendlyFire' 
+                  ? 'bg-orange-100 text-orange-800 border-2 border-orange-300' 
+                  : 'bg-red-100 text-red-800 border-2 border-red-300'
+              }`}>
+                <span className="text-2xl mr-2">{warningMessage.icon}</span>
+                {warningMessage.message}
+              </div>
+            )}
+            
             <div className="flex justify-between items-center mb-4 flex-wrap gap-2">
               <div className="flex items-center gap-2 bg-blue-100 px-4 py-2 rounded-lg">
                 <Timer />
