@@ -37,6 +37,8 @@ const ChaseGame = () => {
   const [readyPlayers, setReadyPlayers] = useState([]);
   const [totalPlayers, setTotalPlayers] = useState(0);
   const [isReady, setIsReady] = useState(false);
+  const [lobbyReadyPlayers, setLobbyReadyPlayers] = useState([]);
+  const [isLobbyReady, setIsLobbyReady] = useState(false);
   
   const wsRef = useRef(null);
   const keysPressed = useRef({});
@@ -147,7 +149,12 @@ const ChaseGame = () => {
         break;
       
       case 'lobbyUpdate':
+        console.log('Получен lobbyUpdate, устанавливаем gameState в lobby');
         setLobbyPlayers(data.players);
+        setLobbyReadyPlayers([]);
+        setIsLobbyReady(false);
+        setTotalPlayers(data.players.length);
+        setGameState('lobby'); // Убеждаемся, что состояние игры установлено в 'lobby'
         break;
       
       case 'gameStart':
@@ -223,8 +230,16 @@ const ChaseGame = () => {
         break;
       
       case 'readyUpdate':
+        console.log('Получен readyUpdate:', { 
+          gameState, 
+          readyPlayers: data.readyPlayers, 
+          totalPlayers: data.totalPlayers 
+        });
+        // Всегда обновляем оба состояния готовности для надежности
+        setLobbyReadyPlayers(data.readyPlayers);
         setReadyPlayers(data.readyPlayers);
         setTotalPlayers(data.totalPlayers);
+        console.log('Обновлены оба состояния готовности:', data.readyPlayers);
         break;
       
       case 'playerDisconnected':
@@ -304,8 +319,16 @@ const ChaseGame = () => {
 
   const markAsReady = () => {
     if (!isReady) {
-      sendToServer({ type: 'playerReady', roomCode });
+      console.log('Отправляем playerReadyRound для раунда');
+      sendToServer({ type: 'playerReadyRound', roomCode });
       setIsReady(true);
+    }
+  };
+
+  const markAsLobbyReady = () => {
+    if (!isLobbyReady) {
+      sendToServer({ type: 'playerReady', roomCode });
+      setIsLobbyReady(true);
     }
   };
 
@@ -566,29 +589,39 @@ const ChaseGame = () => {
               <div className="space-y-2">
                 {lobbyPlayers.map((player, index) => (
                   <div key={player.id} className="flex items-center gap-3 bg-gray-50 p-3 rounded-lg">
-                    <div className="w-4 h-4 rounded-full bg-gray-400"></div>
+                    <div className={`w-4 h-4 rounded-full ${
+                      lobbyReadyPlayers.includes(player.id) ? 'bg-green-500' : 'bg-gray-400'
+                    }`}></div>
                     <span className="font-bold">{player.name}</span>
                     {player.id === playerId && <span className="text-sm text-gray-500">(вы)</span>}
                     <span className="text-sm text-gray-500">(роль будет определена случайно)</span>
+                    {lobbyReadyPlayers.includes(player.id) && (
+                      <span className="text-sm text-green-600 font-bold">✓ Готов</span>
+                    )}
                   </div>
                 ))}
               </div>
+              <div className="mt-3 text-center text-sm text-gray-600">
+                Готово: {lobbyReadyPlayers.length} из {totalPlayers}
+              </div>
             </div>
 
-            {isHost && (
-              <button 
-                onClick={startGame}
-                disabled={lobbyPlayers.length < 2}
-                className="w-full bg-gradient-to-r from-green-500 to-blue-500 text-white px-6 py-4 rounded-lg text-xl font-bold hover:scale-105 transition-transform disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {lobbyPlayers.length < 2 ? 'Ожидание игроков...' : 'Начать игру!'}
-              </button>
-            )}
-
-            {!isHost && (
+            {lobbyPlayers.length < 2 ? (
               <div className="text-center text-lg text-gray-600">
-                Ожидание начала игры...
+                Ожидание игроков... (минимум 2 игрока)
               </div>
+            ) : (
+              <button 
+                onClick={markAsLobbyReady}
+                disabled={isLobbyReady}
+                className={`w-full px-6 py-4 rounded-lg text-xl font-bold transition-transform ${
+                  isLobbyReady 
+                    ? 'bg-green-100 text-green-700 cursor-not-allowed' 
+                    : 'bg-gradient-to-r from-green-500 to-blue-500 text-white hover:scale-105'
+                }`}
+              >
+                {isLobbyReady ? '✅ Готов к игре!' : '🎮 Готов к игре!'}
+              </button>
             )}
           </div>
         )}

@@ -148,6 +148,8 @@ function endRound(roomCode, winner, reason) {
   }
 
   room.gameState = 'roundEnded';
+  room.lastWinner = winner;
+  room.lastReason = reason;
   if (room.gameInterval) {
     clearInterval(room.gameInterval);
   }
@@ -295,6 +297,13 @@ wss.on('connection', (ws) => {
             }))
           });
           
+          // Отправляем начальное состояние готовности
+          broadcastToRoom(roomCode, {
+            type: 'readyUpdate',
+            readyPlayers: [],
+            totalPlayers: rooms.get(roomCode).players.length
+          });
+          
           console.log(`Комната создана: ${roomCode}`);
           break;
         }
@@ -350,6 +359,20 @@ wss.on('connection', (ws) => {
                 room.reconnectTimeout = null;
                 console.log(`Натурал вернулся, игра продолжается`);
               }
+            } else if (room.gameState === 'roundEnded') {
+              // Если раунд окончен, отправляем состояние окончания раунда
+              ws.send(JSON.stringify({
+                type: 'roundEnded',
+                winner: room.lastWinner || 'gays',
+                reason: room.lastReason || 'caught',
+                roles: room.roles,
+                myRole: room.roles[existingPlayer.id],
+                myId: existingPlayer.id,
+                score: room.score,
+                roundNumber: room.roundNumber,
+                readyPlayers: Array.from(room.readyPlayers),
+                totalPlayers: room.players.length
+              }));
             } else {
               broadcastToRoom(roomCode, {
                 type: 'lobbyUpdate',
@@ -398,64 +421,87 @@ wss.on('connection', (ws) => {
               }))
             });
             
+            // Отправляем обновление о готовности
+            broadcastToRoom(roomCode, {
+              type: 'readyUpdate',
+              readyPlayers: Array.from(room.readyPlayers),
+              totalPlayers: room.players.length
+            });
+            
             console.log(`Новый игрок присоединился к комнате ${roomCode}`);
           }
           break;
         }
         
-        case 'startGame': {
+        case 'playerReady': {
           const roomCode = data.roomCode;
           const room = rooms.get(roomCode);
           
           if (!room || room.gameState !== 'lobby') break;
-          if (ws.playerId !== room.host) break;
           
-          room.gameState = 'playing';
-          room.timeLeft = GAME_DURATION;
+          room.readyPlayers.add(ws.playerId);
           
-          const roles = {};
-          const gamePlayers = {};
+          // Проверяем, готовы ли все игроки
+          const allPlayersReady = room.players.every(player => 
+            room.readyPlayers.has(player.id)
+          );
           
-          // Случайно выбираем натурала из всех игроков
-          const playerIds = room.players.map(p => p.id);
-          const randomStraightIndex = Math.floor(Math.random() * playerIds.length);
-          const straightPlayerId = playerIds[randomStraightIndex];
-          
-          console.log(`Случайно выбран натурал: ${room.players.find(p => p.id === straightPlayerId)?.name} (${straightPlayerId})`);
-          
-          room.players.forEach((player, index) => {
-            const role = player.id === straightPlayerId ? 'straight' : 'gay';
-            roles[player.id] = role;
+          if (allPlayersReady) {
+            // Все игроки готовы, начинаем игру
+            room.gameState = 'playing';
+            room.timeLeft = GAME_DURATION;
             
-            const startPositions = [
-              { x: 400, y: 300 },
-              { x: 100, y: 100 },
-              { x: 700, y: 100 },
-              { x: 100, y: 500 },
-              { x: 700, y: 500 }
-            ];
+            const roles = {};
+            const gamePlayers = {};
             
-            gamePlayers[player.id] = {
-              x: startPositions[index].x,
-              y: startPositions[index].y,
-              role: role,
-              speed: role === 'straight' ? 4.2 : 3,
-              name: player.name,
-              dashCooldown: 0
-            };
-          });
-          
-          room.roles = roles;
-          room.gamePlayers = gamePlayers;
-          
-          broadcastToRoom(roomCode, {
-            type: 'gameStart',
-            roles: roles,
-            players: gamePlayers
-          });
-          
-          startGameLoop(roomCode);
-          console.log(`Игра началась в комнате ${roomCode}`);
+            // Случайно выбираем натурала из всех игроков
+            const playerIds = room.players.map(p => p.id);
+            const randomStraightIndex = Math.floor(Math.random() * playerIds.length);
+            const straightPlayerId = playerIds[randomStraightIndex];
+            
+            console.log(`Случайно выбран натурал: ${room.players.find(p => p.id === straightPlayerId)?.name} (${straightPlayerId})`);
+            
+            room.players.forEach((player, index) => {
+              const role = player.id === straightPlayerId ? 'straight' : 'gay';
+              roles[player.id] = role;
+              
+              const startPositions = [
+                { x: 400, y: 300 },
+                { x: 100, y: 100 },
+                { x: 700, y: 100 },
+                { x: 100, y: 500 },
+                { x: 700, y: 500 }
+              ];
+              
+              gamePlayers[player.id] = {
+                x: startPositions[index].x,
+                y: startPositions[index].y,
+                role: role,
+                speed: role === 'straight' ? 4.2 : 3,
+                name: player.name,
+                dashCooldown: 0
+              };
+            });
+            
+            room.roles = roles;
+            room.gamePlayers = gamePlayers;
+            
+            broadcastToRoom(roomCode, {
+              type: 'gameStart',
+              roles: roles,
+              players: gamePlayers
+            });
+            
+            startGameLoop(roomCode);
+            console.log(`Игра началась в комнате ${roomCode}`);
+          } else {
+            // Отправляем обновление о готовности
+            broadcastToRoom(roomCode, {
+              type: 'readyUpdate',
+              readyPlayers: Array.from(room.readyPlayers),
+              totalPlayers: room.players.length
+            });
+          }
           break;
         }
         
@@ -528,7 +574,7 @@ wss.on('connection', (ws) => {
           break;
         }
         
-        case 'playerReady': {
+        case 'playerReadyRound': {
           const roomCode = data.roomCode;
           const room = rooms.get(roomCode);
           
@@ -544,11 +590,16 @@ wss.on('connection', (ws) => {
           if (allPlayersReady) {
             startNewRound(roomCode);
           } else {
-            // Отправляем обновление о готовности
-            broadcastToRoom(roomCode, {
-              type: 'readyUpdate',
-              readyPlayers: Array.from(room.readyPlayers),
-              totalPlayers: room.players.length
+            // Отправляем обновление о готовности всем игрокам
+            room.players.forEach(player => {
+              const client = clients.get(player.id);
+              if (client && client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({
+                  type: 'readyUpdate',
+                  readyPlayers: Array.from(room.readyPlayers),
+                  totalPlayers: room.players.length
+                }));
+              }
             });
           }
           break;
