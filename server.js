@@ -106,7 +106,7 @@ function startGameLoop(roomCode) {
     room.timeLeft -= 1/60;
 
     if (room.timeLeft <= 0) {
-      endGame(roomCode, 'straight', 'timeout');
+      endRound(roomCode, 'straight', 'timeout');
       return;
     }
 
@@ -120,7 +120,11 @@ function startGameLoop(roomCode) {
             x: player.x,
             y: player.y
           });
-          setTimeout(() => endGame(roomCode, 'gays', 'caught'), 1500);
+          // Защита от повторного вызова
+          if (!room.collisionHandled) {
+            room.collisionHandled = true;
+            setTimeout(() => endRound(roomCode, 'gays', 'caught'), 1500);
+          }
         }
       }
 
@@ -133,11 +137,17 @@ function startGameLoop(roomCode) {
   }, 1000 / 60);
 }
 
-function endGame(roomCode, winner, reason) {
+function endRound(roomCode, winner, reason) {
   const room = rooms.get(roomCode);
   if (!room) return;
 
-  room.gameState = 'ended';
+  // Защита от повторного вызова
+  if (room.gameState === 'roundEnded') {
+    console.log(`Раунд уже окончен для комнаты ${roomCode}`);
+    return;
+  }
+
+  room.gameState = 'roundEnded';
   if (room.gameInterval) {
     clearInterval(room.gameInterval);
   }
@@ -147,20 +157,95 @@ function endGame(roomCode, winner, reason) {
     room.reconnectTimeout = null;
   }
 
+  // Обновляем счет
+  console.log(`Обновляем счет. Победитель: ${winner}, текущий счет:`, room.score);
+  if (winner === 'straight') {
+    room.score.straight++;
+    console.log(`Счет натуралов увеличен до: ${room.score.straight}`);
+  } else if (winner === 'gays') {
+    room.score.gays++;
+    console.log(`Счет геев увеличен до: ${room.score.gays}`);
+  }
+
+  room.readyPlayers.clear();
+  
+  console.log(`Раунд ${room.roundNumber} окончен. Победитель: ${winner}. Счет:`, room.score);
+
   // Персональная рассылка: каждому игроку отправляем его роль в поле myRole и его playerId
   room.players.forEach(player => {
     const client = clients.get(player.id);
     if (client && client.readyState === WebSocket.OPEN) {
       client.send(JSON.stringify({
-        type: 'gameOver',
+        type: 'roundEnded',
         winner: winner,
         reason: reason,
         roles: room.roles,
         myRole: room.roles[player.id], // роль для этого клиента
-        myId: player.id
+        myId: player.id,
+        score: room.score,
+        roundNumber: room.roundNumber,
+        readyPlayers: [],
+        totalPlayers: room.players.length
       }));
     }
   });
+}
+
+function startNewRound(roomCode) {
+  const room = rooms.get(roomCode);
+  if (!room) return;
+
+  room.gameState = 'playing';
+  room.timeLeft = GAME_DURATION;
+  room.readyPlayers.clear();
+  room.collisionHandled = false;
+  room.roundNumber++;
+
+  const roles = {};
+  const gamePlayers = {};
+  
+  // Случайно выбираем натурала из всех игроков
+  const playerIds = room.players.map(p => p.id);
+  const randomStraightIndex = Math.floor(Math.random() * playerIds.length);
+  const straightPlayerId = playerIds[randomStraightIndex];
+  
+  console.log(`Новый раунд ${room.roundNumber}: случайно выбран натурал: ${room.players.find(p => p.id === straightPlayerId)?.name} (${straightPlayerId})`);
+  
+  room.players.forEach((player, index) => {
+    const role = player.id === straightPlayerId ? 'straight' : 'gay';
+    roles[player.id] = role;
+    
+    const startPositions = [
+      { x: 400, y: 300 },
+      { x: 100, y: 100 },
+      { x: 700, y: 100 },
+      { x: 100, y: 500 },
+      { x: 700, y: 500 }
+    ];
+    
+    gamePlayers[player.id] = {
+      x: startPositions[index].x,
+      y: startPositions[index].y,
+      role: role,
+      speed: role === 'straight' ? 4.2 : 3,
+      name: player.name,
+      dashCooldown: 0
+    };
+  });
+  
+  room.roles = roles;
+  room.gamePlayers = gamePlayers;
+  
+  broadcastToRoom(roomCode, {
+    type: 'newRound',
+    roles: roles,
+    players: gamePlayers,
+    score: room.score,
+    roundNumber: room.roundNumber
+  });
+  
+  startGameLoop(roomCode);
+  console.log(`Новый раунд ${room.roundNumber} начался в комнате ${roomCode}`);
 }
 
 wss.on('connection', (ws) => {
@@ -183,7 +268,13 @@ wss.on('connection', (ws) => {
               name: data.playerName,
               ws: ws
             }],
-            gameState: 'lobby'
+            gameState: 'lobby',
+            score: {
+              straight: 0,
+              gays: 0
+            },
+            readyPlayers: new Set(),
+            roundNumber: 0
           });
           
           clients.set(playerId, ws);
@@ -436,6 +527,32 @@ wss.on('connection', (ws) => {
           }));
           break;
         }
+        
+        case 'playerReady': {
+          const roomCode = data.roomCode;
+          const room = rooms.get(roomCode);
+          
+          if (!room || room.gameState !== 'roundEnded') break;
+          
+          room.readyPlayers.add(ws.playerId);
+          
+          // Проверяем, готовы ли все игроки
+          const allPlayersReady = room.players.every(player => 
+            room.readyPlayers.has(player.id)
+          );
+          
+          if (allPlayersReady) {
+            startNewRound(roomCode);
+          } else {
+            // Отправляем обновление о готовности
+            broadcastToRoom(roomCode, {
+              type: 'readyUpdate',
+              readyPlayers: Array.from(room.readyPlayers),
+              totalPlayers: room.players.length
+            });
+          }
+          break;
+        }
       }
     } catch (error) {
       console.error('Ошибка обработки сообщения:', error);
@@ -510,7 +627,7 @@ wss.on('connection', (ws) => {
                       });
                       
                       if (stillActiveStraightPlayers.length === 0) {
-                        endGame(ws.roomCode, 'gays', 'disconnected');
+                        endRound(ws.roomCode, 'gays', 'disconnected');
                       }
                       room.reconnectTimeout = null;
                     }, 10000);

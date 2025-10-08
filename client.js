@@ -15,7 +15,7 @@ const Check = () => React.createElement('div', { className: 'w-6 h-6' }, '✅');
 
 const ChaseGame = () => {
   const canvasRef = useRef(null);
-  const [gameState, setGameState] = useState('menu'); // menu, lobby, playing, won, lost
+  const [gameState, setGameState] = useState('menu'); // menu, lobby, playing, roundEnded, won, lost
   const [timeLeft, setTimeLeft] = useState(120);
   const [roomCode, setRoomCode] = useState('');
   const [inputRoomCode, setInputRoomCode] = useState('');
@@ -32,6 +32,11 @@ const ChaseGame = () => {
   const [connectionStatus, setConnectionStatus] = useState('disconnected');
   const [roomExists, setRoomExists] = useState(true); // По умолчанию true, чтобы не показывать кнопку до проверки
   const [gameEndReason, setGameEndReason] = useState(null);
+  const [score, setScore] = useState({ straight: 0, gays: 0 });
+  const [roundNumber, setRoundNumber] = useState(0);
+  const [readyPlayers, setReadyPlayers] = useState([]);
+  const [totalPlayers, setTotalPlayers] = useState(0);
+  const [isReady, setIsReady] = useState(false);
   
   const wsRef = useRef(null);
   const keysPressed = useRef({});
@@ -170,8 +175,10 @@ const ChaseGame = () => {
         setCollision({ x: data.x, y: data.y, frame: 0 });
         break;
       
-      case 'gameOver':
-        console.log('Игра окончена:', data);
+      case 'roundEnded':
+        console.log('Раунд окончен:', data);
+        console.log('Счет получен:', data.score);
+        console.log('Номер раунда:', data.roundNumber);
       
         // Надёжно получаем свой id и роль
         const currentId = playerId || localStorage.getItem('lastPlayerId') || data.myId;
@@ -193,7 +200,31 @@ const ChaseGame = () => {
         setGameEndReason(data.reason || null);
         setPlayerRole(currentRole);
         localStorage.setItem('lastPlayerRole', currentRole);
-        setGameState(result);
+        setScore(data.score || { straight: 0, gays: 0 });
+        setRoundNumber(data.roundNumber || 0);
+        setIsReady(false);
+        setReadyPlayers(data.readyPlayers || []);
+        setTotalPlayers(data.totalPlayers || 0);
+        setGameState('roundEnded');
+        break;
+      
+      case 'newRound':
+        console.log('Новый раунд:', data);
+        setPlayerRole(data.roles[playerId]);
+        localStorage.setItem('lastPlayerRole', data.roles[playerId]);
+        setPlayers(data.players);
+        setScore(data.score);
+        setRoundNumber(data.roundNumber);
+        setTimeLeft(GAME_DURATION);
+        setIsReady(false);
+        setReadyPlayers([]);
+        setTotalPlayers(0);
+        setGameState('playing');
+        break;
+      
+      case 'readyUpdate':
+        setReadyPlayers(data.readyPlayers);
+        setTotalPlayers(data.totalPlayers);
         break;
       
       case 'playerDisconnected':
@@ -269,6 +300,13 @@ const ChaseGame = () => {
     navigator.clipboard.writeText(roomCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const markAsReady = () => {
+    if (!isReady) {
+      sendToServer({ type: 'playerReady', roomCode });
+      setIsReady(true);
+    }
   };
 
   useEffect(() => {
@@ -503,6 +541,26 @@ const ChaseGame = () => {
               </button>
             </div>
 
+            {roundNumber > 0 && (
+              <div className="bg-white border-2 border-gray-200 rounded-lg p-4">
+                <h3 className="text-xl font-bold mb-3">Счет:</h3>
+                <div className="flex justify-between items-center">
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-blue-600">{score.straight}</div>
+                    <div className="text-sm text-gray-600">Натуралы</div>
+                  </div>
+                  <div className="text-2xl font-bold text-gray-400">:</div>
+                  <div className="text-center">
+                    <div className="text-2xl font-bold text-pink-600">{score.gays}</div>
+                    <div className="text-sm text-gray-600">Геи</div>
+                  </div>
+                </div>
+                <div className="text-center mt-2 text-sm text-gray-500">
+                  Раунд {roundNumber + 1}
+                </div>
+              </div>
+            )}
+
             <div className="bg-white border-2 border-gray-200 rounded-lg p-4">
               <h3 className="text-xl font-bold mb-3">Игроки ({lobbyPlayers.length}):</h3>
               <div className="space-y-2">
@@ -553,6 +611,26 @@ const ChaseGame = () => {
                 </div>
               )}
             </div>
+            
+            {roundNumber > 0 && (
+              <div className="bg-white border-2 border-gray-200 rounded-lg p-3 mb-4">
+                <div className="flex justify-center items-center gap-6">
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-blue-600">{score.straight}</div>
+                    <div className="text-xs text-gray-600">Натуралы</div>
+                  </div>
+                  <div className="text-xl font-bold text-gray-400">:</div>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-pink-600">{score.gays}</div>
+                    <div className="text-xs text-gray-600">Геи</div>
+                  </div>
+                  <div className="text-sm text-gray-500 ml-4">
+                    Раунд {roundNumber + 1}
+                  </div>
+                </div>
+              </div>
+            )}
+            
             <canvas 
               ref={canvasRef} 
               width={CANVAS_WIDTH} 
@@ -560,6 +638,60 @@ const ChaseGame = () => {
               className="border-4 border-gray-800 rounded-lg w-full"
             />
           </>
+        )}
+
+        {gameState === 'roundEnded' && (
+          <div className="text-center space-y-6">
+            <div className="bg-white border-2 border-gray-200 rounded-lg p-6">
+              <h2 className="text-3xl font-bold mb-4">
+                {gameEndReason === 'timeout' ? '⏰ Время вышло!' : '🎯 Пойман!'}
+              </h2>
+              <p className="text-xl mb-4">
+                {gameEndReason === 'timeout' 
+                  ? 'Натурал продержался 2 минуты!' 
+                  : 'Геи поймали натурала!'}
+              </p>
+              
+              <div className="bg-gray-50 p-4 rounded-lg mb-4">
+                <h3 className="text-xl font-bold mb-3">Счет:</h3>
+                <div className="flex justify-center items-center gap-8">
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-blue-600">{score.straight}</div>
+                    <div className="text-sm text-gray-600">Натуралы</div>
+                  </div>
+                  <div className="text-3xl font-bold text-gray-400">:</div>
+                  <div className="text-center">
+                    <div className="text-3xl font-bold text-pink-600">{score.gays}</div>
+                    <div className="text-sm text-gray-600">Геи</div>
+                  </div>
+                </div>
+                <div className="text-center mt-2 text-sm text-gray-500">
+                  Раунд {roundNumber + 1}
+                </div>
+              </div>
+
+              <div className="mb-4">
+                <p className="text-lg">
+                  Готовы к следующему раунду? Роли будут распределены случайно!
+                </p>
+                <p className="text-sm text-gray-600 mt-2">
+                  Готово: {readyPlayers.length} из {totalPlayers}
+                </p>
+              </div>
+
+              <button 
+                onClick={markAsReady}
+                disabled={isReady}
+                className={`px-8 py-4 rounded-lg text-xl font-bold transition-transform ${
+                  isReady 
+                    ? 'bg-green-100 text-green-700 cursor-not-allowed' 
+                    : 'bg-gradient-to-r from-green-500 to-blue-500 text-white hover:scale-105'
+                }`}
+              >
+                {isReady ? '✅ Готов!' : '🎮 Готов к новому раунду!'}
+              </button>
+            </div>
+          </div>
         )}
 
         {(gameState === 'won' || gameState === 'lost') && (
