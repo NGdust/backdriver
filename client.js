@@ -13,6 +13,68 @@ const Timer = () => React.createElement('div', { className: 'w-6 h-6' }, '⏱️
 const Copy = () => React.createElement('div', { className: 'w-6 h-6' }, '📋');
 const Check = () => React.createElement('div', { className: 'w-6 h-6' }, '✅');
 
+// Компонент модального окна для ввода имени
+const NamePromptModal = ({ isOpen, onNameSubmit, roomCode }) => {
+  const [tempName, setTempName] = useState('');
+  
+  if (!isOpen) return null;
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    onNameSubmit(tempName);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl shadow-2xl p-8 max-w-md w-full mx-4 transform transition-all duration-300 scale-100">
+        <div className="text-center space-y-6">
+          <div className="text-6xl mb-4">🎮</div>
+          
+          <h2 className="text-3xl font-bold mb-4">
+            Присоединение к комнате
+          </h2>
+          
+          <p className="text-xl mb-6">
+            Введите ваше имя для присоединения к комнате <strong>{roomCode}</strong>
+          </p>
+          
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <input
+              type="text"
+              placeholder="Введите ваше имя"
+              value={tempName}
+              onChange={(e) => setTempName(e.target.value)}
+              className="w-full px-4 py-3 border-2 border-gray-300 rounded-lg text-lg text-center"
+              maxLength={15}
+              autoFocus
+            />
+            
+            <div className="flex gap-3">
+              <button 
+                type="button"
+                onClick={() => {
+                  setTempName('');
+                  window.history.replaceState({}, '', window.location.pathname);
+                  window.location.reload();
+                }}
+                className="flex-1 bg-gray-500 text-white px-6 py-3 rounded-lg text-lg font-bold hover:bg-gray-600 transition-colors"
+              >
+                Отмена
+              </button>
+              <button 
+                type="submit"
+                className="flex-1 bg-gradient-to-r from-green-500 to-blue-500 text-white px-6 py-3 rounded-lg text-lg font-bold hover:scale-105 transition-transform"
+              >
+                Присоединиться
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // Компонент модального окна для результатов раунда
 const RoundEndModal = ({ isOpen, gameEndReason, score, roundNumber, readyPlayers, totalPlayers, isReady, onMarkAsReady }) => {
   if (!isOpen) return null;
@@ -111,6 +173,9 @@ const ChaseGame = () => {
   const [isLobbyReady, setIsLobbyReady] = useState(false);
   const [showRoundEndModal, setShowRoundEndModal] = useState(false);
   const [warningMessage, setWarningMessage] = useState(null);
+  const [autoJoining, setAutoJoining] = useState(false);
+  const [showNamePrompt, setShowNamePrompt] = useState(false);
+  const [pendingRoomCode, setPendingRoomCode] = useState('');
   
   const wsRef = useRef(null);
   const keysPressed = useRef({});
@@ -147,6 +212,26 @@ const ChaseGame = () => {
     if (savedPlayerName) setPlayerName(savedPlayerName);
     if (savedRoomCode) setLastRoomCode(savedRoomCode);
     
+    // Проверяем URL параметры для автоматического присоединения
+    const urlParams = new URLSearchParams(window.location.search);
+    const roomCodeFromUrl = urlParams.get('room');
+    if (roomCodeFromUrl) {
+      setInputRoomCode(roomCodeFromUrl.toUpperCase());
+      setPendingRoomCode(roomCodeFromUrl.toUpperCase());
+      console.log('Код комнаты из URL:', roomCodeFromUrl);
+      
+      // Проверяем, есть ли сохраненное имя
+      const savedPlayerName = localStorage.getItem('playerName');
+      if (savedPlayerName && savedPlayerName.trim()) {
+        console.log('Автоматическое присоединение к комнате по ссылке');
+        setAutoJoining(true);
+      } else {
+        // Показываем модальное окно для ввода имени
+        console.log('Показываем модальное окно для ввода имени');
+        setShowNamePrompt(true);
+      }
+    }
+    
     connectToServer();
     return () => {
       if (wsRef.current) {
@@ -164,6 +249,19 @@ const ChaseGame = () => {
         setConnectionStatus('connected');
         // Проверяем существование последней комнаты
         checkRoomExists();
+        
+        // Проверяем, нужно ли автоматически присоединиться к комнате
+        const urlParams = new URLSearchParams(window.location.search);
+        const roomCodeFromUrl = urlParams.get('room');
+        const savedPlayerName = localStorage.getItem('playerName');
+        
+        if (roomCodeFromUrl && savedPlayerName && savedPlayerName.trim()) {
+          console.log('Автоматическое присоединение к комнате по ссылке после подключения');
+          setTimeout(() => {
+            sendToServer({ type: 'joinRoom', roomCode: roomCodeFromUrl.toUpperCase(), playerName: savedPlayerName });
+            setAutoJoining(false);
+          }, 500);
+        }
       };
 
       ws.onmessage = (event) => {
@@ -199,6 +297,11 @@ const ChaseGame = () => {
         // Сохраняем информацию о комнате
         localStorage.setItem('lastRoomCode', data.roomCode);
         localStorage.setItem('lastPlayerId', data.playerId);
+        
+        // Обновляем URL с кодом комнаты для возможности поделиться ссылкой
+        const inviteUrl = `${window.location.origin}${window.location.pathname}?room=${data.roomCode}`;
+        window.history.replaceState({}, '', inviteUrl);
+        console.log('URL обновлен с кодом комнаты:', inviteUrl);
         break;
       
       case 'roomJoined':
@@ -214,9 +317,20 @@ const ChaseGame = () => {
         // Сохраняем информацию о комнате
         localStorage.setItem('lastRoomCode', data.roomCode);
         localStorage.setItem('lastPlayerId', data.playerId);
+        
+        // Обновляем URL с кодом комнаты
+        const joinedUrl = `${window.location.origin}${window.location.pathname}?room=${data.roomCode}`;
+        window.history.replaceState({}, '', joinedUrl);
+        console.log('URL обновлен при присоединении:', joinedUrl);
+        
         // Если игра уже идет, не переключаемся в lobby
         if (data.gameState !== 'playing') {
           setGameState('lobby');
+        }
+        
+        // Убираем индикатор автоматического присоединения при успешном присоединении
+        if (autoJoining) {
+          setAutoJoining(false);
         }
         break;
       
@@ -322,6 +436,10 @@ const ChaseGame = () => {
       
       case 'error':
         alert(data.message);
+        // Если была ошибка при автоматическом присоединении, убираем индикатор
+        if (autoJoining) {
+          setAutoJoining(false);
+        }
         break;
       
       case 'roomExists':
@@ -374,8 +492,35 @@ const ChaseGame = () => {
       alert('Введите код комнаты!');
       return;
     }
+    
+    let roomCode = inputRoomCode.trim().toUpperCase();
+    
+    // Если введена ссылка, извлекаем код комнаты
+    if (roomCode.includes('?room=')) {
+      try {
+        const urlParams = new URLSearchParams(roomCode.split('?')[1]);
+        const extractedCode = urlParams.get('room');
+        if (extractedCode) {
+          roomCode = extractedCode.toUpperCase();
+          setInputRoomCode(roomCode); // Обновляем поле ввода
+        } else {
+          alert('Неверная ссылка! Не удалось извлечь код комнаты.');
+          return;
+        }
+      } catch (error) {
+        alert('Неверная ссылка! Проверьте формат ссылки.');
+        return;
+      }
+    }
+    
+    // Валидация кода комнаты (6 символов, буквы и цифры)
+    if (!/^[A-Z0-9]{6}$/.test(roomCode)) {
+      alert('Код комнаты должен содержать 6 символов (буквы и цифры)!');
+      return;
+    }
+    
     localStorage.setItem('playerName', playerName);
-    sendToServer({ type: 'joinRoom', roomCode: inputRoomCode.toUpperCase(), playerName });
+    sendToServer({ type: 'joinRoom', roomCode: roomCode, playerName });
   };
 
   const checkRoomExists = () => {
@@ -409,6 +554,38 @@ const ChaseGame = () => {
     navigator.clipboard.writeText(roomCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+  };
+
+  const generateInviteLink = () => {
+    const baseUrl = window.location.origin + window.location.pathname;
+    return `${baseUrl}?room=${roomCode}`;
+  };
+
+  const copyInviteLink = () => {
+    const inviteLink = generateInviteLink();
+    navigator.clipboard.writeText(inviteLink);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleNameSubmit = (name) => {
+    if (!name.trim()) {
+      alert('Введите имя!');
+      return;
+    }
+    
+    setPlayerName(name);
+    localStorage.setItem('playerName', name);
+    setShowNamePrompt(false);
+    setAutoJoining(true);
+    
+    // Присоединяемся к комнате после ввода имени
+    if (pendingRoomCode) {
+      console.log('Присоединяемся к комнате после ввода имени:', pendingRoomCode);
+      setTimeout(() => {
+        sendToServer({ type: 'joinRoom', roomCode: pendingRoomCode, playerName: name });
+      }, 500);
+    }
   };
 
   const markAsReady = () => {
@@ -574,7 +751,7 @@ const ChaseGame = () => {
     <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-purple-400 via-pink-300 to-yellow-300 p-4">
       <div className="bg-white rounded-xl shadow-2xl p-6 max-w-4xl w-full">
         <h1 className="text-4xl font-bold text-center mb-4 bg-gradient-to-r from-blue-600 to-pink-600 bg-clip-text text-transparent flex items-center justify-center gap-3">
-          🏳️‍🌈 Бэкдрайвер
+          Спасай свой зад
           <span className={`w-3 h-3 rounded-full ${
             connectionStatus === 'connected' ? 'bg-green-500' :
             connectionStatus === 'error' ? 'bg-red-500' :
@@ -584,6 +761,17 @@ const ChaseGame = () => {
 
         {gameState === 'menu' && (
           <div className="space-y-6">
+            {autoJoining && (
+              <div className="bg-yellow-100 border-2 border-yellow-300 p-4 rounded-lg text-center">
+                <div className="text-lg font-bold text-yellow-800 mb-2">
+                  🔄 Автоматическое присоединение к комнате...
+                </div>
+                <div className="text-sm text-yellow-700">
+                  Пожалуйста, подождите
+                </div>
+              </div>
+            )}
+            
             <div className="bg-blue-50 p-6 rounded-lg">
               <h2 className="text-2xl font-bold mb-4 text-blue-900">Как играть:</h2>
               <div className="text-left space-y-2">
@@ -635,14 +823,30 @@ const ChaseGame = () => {
                 )}
 
                 <div className="space-y-2">
-                  <input
-                    type="text"
-                    placeholder="Код комнаты"
-                    value={inputRoomCode}
-                    onChange={(e) => setInputRoomCode(e.target.value.toUpperCase())}
-                    className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg text-lg text-center uppercase"
-                    maxLength={6}
-                  />
+                  <div className="relative">
+                    <input
+                      type="text"
+                      placeholder="Код комнаты или ссылка"
+                      value={inputRoomCode}
+                      onChange={(e) => {
+                        let value = e.target.value;
+                        // Если введена ссылка, извлекаем код комнаты
+                        if (value.includes('?room=')) {
+                          const urlParams = new URLSearchParams(value.split('?')[1]);
+                          const roomCode = urlParams.get('room');
+                          if (roomCode) {
+                            value = roomCode;
+                          }
+                        }
+                        setInputRoomCode(value.toUpperCase());
+                      }}
+                      className="w-full px-4 py-2 border-2 border-gray-300 rounded-lg text-lg text-center uppercase"
+                      maxLength={50}
+                    />
+                    <div className="absolute right-2 top-1/2 transform -translate-y-1/2 text-gray-400 text-sm">
+                      {inputRoomCode.includes('?room=') ? '🔗' : '🏷️'}
+                    </div>
+                  </div>
                   <button 
                     onClick={joinRoom}
                     disabled={connectionStatus !== 'connected' || !inputRoomCode.trim()}
@@ -655,6 +859,9 @@ const ChaseGame = () => {
                       Имя: <strong>{playerName}</strong>
                     </div>
                   )}
+                  <div className="text-xs text-gray-500 text-center">
+                    💡 Можно ввести код комнаты или вставить ссылку с кодом
+                  </div>
                 </div>
               </div>
             </div>
@@ -665,13 +872,25 @@ const ChaseGame = () => {
           <div className="space-y-6">
             <div className="bg-gradient-to-r from-blue-100 to-pink-100 p-6 rounded-lg">
               <h2 className="text-2xl font-bold mb-4">Комната: {roomCode}</h2>
-              <button
-                onClick={copyRoomCode}
-                className="flex items-center gap-2 bg-white px-4 py-2 rounded-lg hover:bg-gray-100 transition-colors"
-              >
-                {copied ? <Check /> : <Copy />}
-                {copied ? 'Скопировано!' : 'Скопировать код'}
-              </button>
+              <div className="flex flex-col sm:flex-row gap-3">
+                <button
+                  onClick={copyRoomCode}
+                  className="flex items-center justify-center gap-2 bg-white px-4 py-2 rounded-lg hover:bg-gray-100 transition-colors"
+                >
+                  {copied ? <Check /> : <Copy />}
+                  {copied ? 'Скопировано!' : 'Скопировать код'}
+                </button>
+                <button
+                  onClick={copyInviteLink}
+                  className="flex items-center justify-center gap-2 bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors"
+                >
+                  {copied ? <Check /> : <Copy />}
+                  {copied ? 'Ссылка скопирована!' : 'Поделиться ссылкой'}
+                </button>
+              </div>
+              <div className="mt-3 text-sm text-gray-600">
+                <p>💡 <strong>Совет:</strong> Поделитесь ссылкой с друзьями для быстрого присоединения!</p>
+              </div>
             </div>
 
             {roundNumber > 0 && (
@@ -794,6 +1013,13 @@ const ChaseGame = () => {
             />
           </>
         )}
+
+        {/* Модальное окно для ввода имени при переходе по ссылке */}
+        <NamePromptModal 
+          isOpen={showNamePrompt}
+          onNameSubmit={handleNameSubmit}
+          roomCode={pendingRoomCode}
+        />
 
         {/* Модальное окно для результатов раунда */}
         <RoundEndModal 
